@@ -7,85 +7,64 @@ struct ContentView: View {
     @State private var capturedPhoto: UIImage? = nil // Holds the captured photo
     @State private var isPhotoPickerPresented = false // To open the gallery for background
     @State private var backgroundImage: UIImage? = nil // Chosen background image
+    @State private var isPhotoPreviewPresented = false // To display the photo preview
+    @State private var photoCaptureDelegate: PhotoCaptureDelegate? // Keep strong reference to delegate
 
     var body: some View {
         ZStack {
-            if let photo = capturedPhoto {
-                // Photo Preview
-                VStack {
-                    Image(uiImage: photo)
+            // Live Camera Feed
+            CameraPreview(session: $session)
+                .edgesIgnoringSafeArea(.all)
+
+            // Background Image Layer
+            if let backgroundImage = backgroundImage {
+                GeometryReader { geometry in
+                    Image(uiImage: backgroundImage)
                         .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.black)
-
-                    HStack {
-                        // Save to Gallery Button
-                        Button(action: saveToGallery) {
-                            Text("Save to Gallery")
-                                .padding()
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .cornerRadius(10)
-                        }
-
-                        // Retake Button
-                        Button(action: { capturedPhoto = nil }) {
-                            Text("Retake")
-                                .padding()
-                                .background(Color.red)
-                                .foregroundColor(.white)
-                                .cornerRadius(10)
-                        }
-                    }
-                    .padding()
+                        .scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .edgesIgnoringSafeArea(.all)
+                        .opacity(0.3)
                 }
-            } else {
-                // Live Camera Feed
-                CameraPreview(session: $session)
-                    .edgesIgnoringSafeArea(.all)
+            }
 
-                // Background Image Layer
-                if let backgroundImage = backgroundImage {
-                    GeometryReader { geometry in
-                        Image(uiImage: backgroundImage)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                            .edgesIgnoringSafeArea(.all)
-                            .opacity(0.3)
+            // Buttons
+            VStack {
+                Spacer()
+                HStack {
+                    // Choose Background Button
+                    Button(action: { isPhotoPickerPresented = true }) {
+                        Text("Choose Background")
+                            .padding()
+                            .background(Color.white.opacity(0.7))
+                            .cornerRadius(10)
+                    }
+
+                    // Take Photo Button
+                    Button(action: takePhoto) {
+                        Circle()
+                            .frame(width: 70, height: 70)
+                            .foregroundColor(.white)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.black, lineWidth: 2)
+                            )
                     }
                 }
-
-                // Buttons
-                VStack {
-                    Spacer()
-                    HStack {
-                        // Choose Background Button
-                        Button(action: { isPhotoPickerPresented = true }) {
-                            Text("Choose Background")
-                                .padding()
-                                .background(Color.white.opacity(0.7))
-                                .cornerRadius(10)
-                        }
-
-                        // Take Photo Button
-                        Button(action: takePhoto) {
-                            Circle()
-                                .frame(width: 70, height: 70)
-                                .foregroundColor(.white)
-                                .overlay(
-                                    Circle()
-                                        .stroke(Color.black, lineWidth: 2)
-                                )
-                        }
-                    }
-                    .padding(.bottom, 40)
-                }
+                .padding(.bottom, 40)
             }
         }
         .sheet(isPresented: $isPhotoPickerPresented) {
             PhotoPicker(selectedImage: $backgroundImage)
+        }
+        .fullScreenCover(isPresented: $isPhotoPreviewPresented) {
+            PhotoPreviewView(photo: capturedPhoto, onRetake: {
+                capturedPhoto = nil
+                isPhotoPreviewPresented = false
+            }, onSave: {
+                saveToGallery()
+                isPhotoPreviewPresented = false
+            })
         }
         .onAppear {
             checkCameraPermissions()
@@ -104,15 +83,23 @@ struct ContentView: View {
 
         let delegate = PhotoCaptureDelegate { photo in
             DispatchQueue.main.async {
-                if let capturedPhoto = photo {
-                    print("Photo capture completed successfully.")
-                    self.capturedPhoto = capturedPhoto // Store the photo for preview
+                if let capturedPhoto = capturedPhoto {
+                    print("Captured photo is now available: \(capturedPhoto.size.width)x\(capturedPhoto.size.height)")
                 } else {
-                    print("Failed to capture photo.")
+                    print("Captured photo is nil.")
+                }
+
+                if let capturedPhoto = photo {
+                    print("Captured photo dimensions: \(capturedPhoto.size.width) x \(capturedPhoto.size.height)")
+                    self.capturedPhoto = capturedPhoto
+                    self.isPhotoPreviewPresented = true
+                } else {
+                    print("Failed to retrieve captured photo.")
                 }
             }
         }
 
+        photoCaptureDelegate = delegate // Keep the delegate reference
         photoOutput.capturePhoto(with: settings, delegate: delegate)
 
         print("Photo capture process initiated.")
@@ -126,6 +113,7 @@ struct ContentView: View {
 
         print("Saving photo to gallery...")
         UIImageWriteToSavedPhotosAlbum(photo, nil, nil, nil)
+        capturedPhoto = nil // Clear the preview after saving
     }
 
     func checkCameraPermissions() {
@@ -175,20 +163,18 @@ struct ContentView: View {
                 print("Error creating input: \(error.localizedDescription)")
             }
 
-            photoOutput.isHighResolutionCaptureEnabled = true
+            if !photoOutput.availablePhotoCodecTypes.isEmpty {
+                print("Supported codec types: \(photoOutput.availablePhotoCodecTypes)")
+            } else {
+                print("No supported codec types found.")
+            }
 
+            photoOutput.isHighResolutionCaptureEnabled = true
             if session.canAddOutput(photoOutput) {
                 session.addOutput(photoOutput)
                 print("Photo output added.")
             } else {
                 print("Error: Could not add photo output.")
-            }
-
-            // Print supported codec types
-            if !photoOutput.availablePhotoCodecTypes.isEmpty {
-                print("Supported codec types: \(photoOutput.availablePhotoCodecTypes)")
-            } else {
-                print("No supported codec types found.")
             }
 
             session.commitConfiguration()
@@ -199,5 +185,45 @@ struct ContentView: View {
             }
         }
     }
+}
 
+struct PhotoPreviewView: View {
+    let photo: UIImage?
+    let onRetake: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        VStack {
+            if let photo = photo {
+                Image(uiImage: photo)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
+            } else {
+                Text("No photo available.")
+                    .foregroundColor(.white)
+            }
+
+            HStack {
+                Button(action: onSave) {
+                    Text("Save to Gallery")
+                        .padding()
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                }
+
+                Button(action: onRetake) {
+                    Text("Retake")
+                        .padding()
+                        .background(Color.red)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                }
+            }
+            .padding()
+        }
+        .background(Color.black.edgesIgnoringSafeArea(.all))
+    }
 }

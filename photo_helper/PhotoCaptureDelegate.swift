@@ -11,7 +11,7 @@ class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         print("PhotoCaptureDelegate: didFinishProcessingPhoto called.")
-        
+
         if let error = error {
             print("Error processing photo: \(error.localizedDescription)")
             completion(nil)
@@ -25,15 +25,13 @@ class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
         }
 
         print("Photo successfully processed: \(imageData.count) bytes")
-        completion(UIImage(data: imageData))
-    }
 
-    func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureForResolvedSettings resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
-        if let error = error {
-            print("Error finishing capture: \(error.localizedDescription)")
+        if let image = UIImage(data: imageData) {
+            print("Captured photo dimensions: \(image.size.width) x \(image.size.height)")
+            completion(image)
         } else {
-            print("Photo capture finished successfully.")
+            print("PhotoCaptureDelegate: Failed to create UIImage from data.")
+            completion(nil)
         }
     }
-
 }
