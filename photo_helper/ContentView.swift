@@ -1,14 +1,34 @@
 import SwiftUI
 import AVFoundation
 
+// Photo Manager class to handle photo state
+class PhotoManager: ObservableObject {
+    @Published var capturedPhoto: UIImage?
+    @Published var isPreviewPresented = false
+    
+    func setPhoto(_ photo: UIImage) {
+        print("PhotoManager: Setting photo")
+        self.capturedPhoto = photo
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            print("PhotoManager: Presenting preview")
+            self.isPreviewPresented = true
+        }
+    }
+    
+    func clearPhoto() {
+        capturedPhoto = nil
+        isPreviewPresented = false
+    }
+}
+
 struct ContentView: View {
+    @StateObject private var photoManager = PhotoManager()
     @State private var session = AVCaptureSession()
     @State private var photoOutput = AVCapturePhotoOutput()
-    @State private var capturedPhoto: UIImage? = nil // Holds the captured photo
-    @State private var isPhotoPickerPresented = false // To open the gallery for background
-    @State private var backgroundImage: UIImage? = nil // Chosen background image
-    @State private var isPhotoPreviewPresented = false // To display the photo preview
-    @State private var photoCaptureDelegate: PhotoCaptureDelegate? // Keep strong reference to delegate
+    @State private var isPhotoPickerPresented = false
+    @State private var backgroundImage: UIImage? = nil
+    @State private var photoCaptureDelegate: PhotoCaptureDelegate?
 
     var body: some View {
         ZStack {
@@ -57,14 +77,20 @@ struct ContentView: View {
         .sheet(isPresented: $isPhotoPickerPresented) {
             PhotoPicker(selectedImage: $backgroundImage)
         }
-        .fullScreenCover(isPresented: $isPhotoPreviewPresented) {
-            PhotoPreviewView(photo: capturedPhoto, onRetake: {
-                capturedPhoto = nil
-                isPhotoPreviewPresented = false
-            }, onSave: {
-                saveToGallery()
-                isPhotoPreviewPresented = false
-            })
+        .fullScreenCover(isPresented: $photoManager.isPreviewPresented) {
+            PhotoPreviewView(
+                photo: photoManager.capturedPhoto,
+                onRetake: {
+                    photoManager.clearPhoto()
+                },
+                onSave: {
+                    saveToGallery()
+                    photoManager.clearPhoto()
+                }
+            )
+            .onAppear {
+                print("FullScreenCover presented with photo: \(photoManager.capturedPhoto != nil)")
+            }
         }
         .onAppear {
             checkCameraPermissions()
@@ -74,7 +100,7 @@ struct ContentView: View {
     func takePhoto() {
         print("Starting photo capture...")
 
-        let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg]) // Explicitly set JPEG
+        let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
         settings.flashMode = .auto
         settings.isHighResolutionPhotoEnabled = true
         settings.isAutoStillImageStabilizationEnabled = true
@@ -83,37 +109,30 @@ struct ContentView: View {
 
         let delegate = PhotoCaptureDelegate { photo in
             DispatchQueue.main.async {
-                if let capturedPhoto = capturedPhoto {
-                    print("Captured photo is now available: \(capturedPhoto.size.width)x\(capturedPhoto.size.height)")
-                } else {
-                    print("Captured photo is nil.")
-                }
-
-                if let capturedPhoto = photo {
-                    print("Captured photo dimensions: \(capturedPhoto.size.width) x \(capturedPhoto.size.height)")
-                    self.capturedPhoto = capturedPhoto
-                    self.isPhotoPreviewPresented = true
+                if let photo = photo {
+                    print("Captured photo dimensions: \(photo.size.width) x \(photo.size.height)")
+                    print("Setting photo via PhotoManager")
+                    self.photoManager.setPhoto(photo)
                 } else {
                     print("Failed to retrieve captured photo.")
                 }
             }
         }
 
-        photoCaptureDelegate = delegate // Keep the delegate reference
+        photoCaptureDelegate = delegate
         photoOutput.capturePhoto(with: settings, delegate: delegate)
 
         print("Photo capture process initiated.")
     }
 
     func saveToGallery() {
-        guard let photo = capturedPhoto else {
+        guard let photo = photoManager.capturedPhoto else {
             print("No photo to save.")
             return
         }
 
         print("Saving photo to gallery...")
         UIImageWriteToSavedPhotosAlbum(photo, nil, nil, nil)
-        capturedPhoto = nil // Clear the preview after saving
     }
 
     func checkCameraPermissions() {
@@ -191,7 +210,7 @@ struct PhotoPreviewView: View {
     let photo: UIImage?
     let onRetake: () -> Void
     let onSave: () -> Void
-
+    
     var body: some View {
         VStack {
             if let photo = photo {
@@ -200,12 +219,24 @@ struct PhotoPreviewView: View {
                     .scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.black)
+                    .onAppear {
+                        print("PhotoPreviewView appeared with photo: \(photo.size)")
+                    }
             } else {
-                Text("No photo available.")
-                    .foregroundColor(.white)
+                VStack {
+                    Text("No photo available.")
+                        .foregroundColor(.white)
+                        .font(.title2)
+                    Text("Debug: Photo is nil")
+                        .foregroundColor(.gray)
+                        .font(.caption)
+                }
+                .onAppear {
+                    print("PhotoPreviewView appeared with NO photo")
+                }
             }
 
-            HStack {
+            HStack(spacing: 20) {
                 Button(action: onSave) {
                     Text("Save to Gallery")
                         .padding()
@@ -225,5 +256,8 @@ struct PhotoPreviewView: View {
             .padding()
         }
         .background(Color.black.edgesIgnoringSafeArea(.all))
+        .onAppear {
+            print("PhotoPreviewView onAppear - Photo exists: \(photo != nil)")
+        }
     }
 }
