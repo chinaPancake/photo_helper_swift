@@ -1,16 +1,38 @@
 import SwiftUI
 import AVFoundation
 
+// Photo Manager class to handle photo state
+class PhotoManager: ObservableObject {
+    @Published var capturedPhoto: UIImage?
+    @Published var isPreviewPresented = false
+    
+    func setPhoto(_ photo: UIImage) {
+        print("PhotoManager: Setting photo")
+        self.capturedPhoto = photo
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            print("PhotoManager: Presenting preview")
+            self.isPreviewPresented = true
+        }
+    }
+    
+    func clearPhoto() {
+        capturedPhoto = nil
+        isPreviewPresented = false
+    }
+}
+
 struct ContentView: View {
+    @StateObject private var photoManager = PhotoManager()
     @State private var session = AVCaptureSession()
     @State private var photoOutput = AVCapturePhotoOutput()
-    @State private var backgroundImage: UIImage? = nil
     @State private var isPhotoPickerPresented = false
-    @StateObject private var photoCaptureManager = PhotoCaptureManager()
+    @State private var backgroundImage: UIImage? = nil
+    @State private var photoCaptureDelegate: PhotoCaptureDelegate?
 
     var body: some View {
         ZStack {
-            // Live Camera Preview
+            // Live Camera Feed
             CameraPreview(session: $session)
                 .edgesIgnoringSafeArea(.all)
 
@@ -30,31 +52,15 @@ struct ContentView: View {
             VStack {
                 Spacer()
                 HStack {
-                    // Choose Background
+                    // Choose Background Button
                     Button(action: { isPhotoPickerPresented = true }) {
                         Text("Choose Background")
                             .padding()
                             .background(Color.white.opacity(0.7))
                             .cornerRadius(10)
                     }
-                    .padding()
-                    
-                    Button(action: {
-                        let test = SimpleTestSave()
-                        test.testSave()
-                    }) {
-                        Text("Test Save to Gallery")
-                            .padding()
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(10)
-                    }
-                    .padding()
 
-
-
-
-                    // Take Photo
+                    // Take Photo Button
                     Button(action: takePhoto) {
                         Circle()
                             .frame(width: 70, height: 70)
@@ -71,15 +77,93 @@ struct ContentView: View {
         .sheet(isPresented: $isPhotoPickerPresented) {
             PhotoPicker(selectedImage: $backgroundImage)
         }
+        .fullScreenCover(isPresented: $photoManager.isPreviewPresented) {
+            PhotoPreviewView(
+                photo: photoManager.capturedPhoto,
+                onRetake: {
+                    photoManager.clearPhoto()
+                },
+                onSave: {
+                    saveToGallery()
+                    photoManager.clearPhoto()
+                }
+            )
+            .onAppear {
+                print("FullScreenCover presented with photo: \(photoManager.capturedPhoto != nil)")
+            }
+        }
         .onAppear {
+            checkCameraPermissions()
+        }
+    }
+
+    func takePhoto() {
+        print("Starting photo capture...")
+
+        let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+        settings.flashMode = .auto
+        settings.isHighResolutionPhotoEnabled = true
+        settings.isAutoStillImageStabilizationEnabled = true
+
+        print("Photo settings: \(settings)")
+
+        let delegate = PhotoCaptureDelegate { photo in
+            DispatchQueue.main.async {
+                if let photo = photo {
+                    print("Captured photo dimensions: \(photo.size.width) x \(photo.size.height)")
+                    print("Setting photo via PhotoManager")
+                    self.photoManager.setPhoto(photo)
+                } else {
+                    print("Failed to retrieve captured photo.")
+                }
+            }
+        }
+
+        photoCaptureDelegate = delegate
+        photoOutput.capturePhoto(with: settings, delegate: delegate)
+
+        print("Photo capture process initiated.")
+    }
+
+    func saveToGallery() {
+        guard let photo = photoManager.capturedPhoto else {
+            print("No photo to save.")
+            return
+        }
+
+        print("Saving photo to gallery...")
+        UIImageWriteToSavedPhotosAlbum(photo, nil, nil, nil)
+    }
+
+    func checkCameraPermissions() {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+
+        switch status {
+        case .authorized:
+            print("Camera access already granted.")
             setupCamera()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                if granted {
+                    DispatchQueue.main.async {
+                        print("Camera access granted.")
+                        self.setupCamera()
+                    }
+                } else {
+                    print("Camera access denied.")
+                }
+            }
+        case .denied, .restricted:
+            print("Camera access denied or restricted.")
+        default:
+            print("Unknown camera access status.")
         }
     }
 
     func setupCamera() {
         DispatchQueue.global(qos: .background).async {
-            self.session.beginConfiguration()
-            self.session.sessionPreset = .photo
+            session.beginConfiguration()
+            session.sessionPreset = .photo
 
             guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
                 print("Error: No back camera found.")
@@ -88,8 +172,8 @@ struct ContentView: View {
 
             do {
                 let input = try AVCaptureDeviceInput(device: device)
-                if self.session.canAddInput(input) {
-                    self.session.addInput(input)
+                if session.canAddInput(input) {
+                    session.addInput(input)
                     print("Camera input added.")
                 } else {
                     print("Error: Could not add input.")
@@ -98,64 +182,82 @@ struct ContentView: View {
                 print("Error creating input: \(error.localizedDescription)")
             }
 
-            self.photoOutput = AVCapturePhotoOutput()
-            self.photoOutput.isHighResolutionCaptureEnabled = true
+            if !photoOutput.availablePhotoCodecTypes.isEmpty {
+                print("Supported codec types: \(photoOutput.availablePhotoCodecTypes)")
+            } else {
+                print("No supported codec types found.")
+            }
 
-            if self.session.canAddOutput(self.photoOutput) {
-                self.session.addOutput(self.photoOutput)
+            photoOutput.isHighResolutionCaptureEnabled = true
+            if session.canAddOutput(photoOutput) {
+                session.addOutput(photoOutput)
                 print("Photo output added.")
             } else {
                 print("Error: Could not add photo output.")
             }
 
-            self.session.commitConfiguration()
-            self.session.startRunning()
+            session.commitConfiguration()
+            session.startRunning()
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                print("Session running: \(self.session.isRunning)")
+                print("Session running: \(session.isRunning)")
             }
         }
     }
+}
 
-    func takePhoto() {
-        print("Starting photo capture...")
+struct PhotoPreviewView: View {
+    let photo: UIImage?
+    let onRetake: () -> Void
+    let onSave: () -> Void
+    
+    var body: some View {
+        VStack {
+            if let photo = photo {
+                Image(uiImage: photo)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
+                    .onAppear {
+                        print("PhotoPreviewView appeared with photo: \(photo.size)")
+                    }
+            } else {
+                VStack {
+                    Text("No photo available.")
+                        .foregroundColor(.white)
+                        .font(.title2)
+                    Text("Debug: Photo is nil")
+                        .foregroundColor(.gray)
+                        .font(.caption)
+                }
+                .onAppear {
+                    print("PhotoPreviewView appeared with NO photo")
+                }
+            }
 
-        let settings = AVCapturePhotoSettings()
-        settings.isHighResolutionPhotoEnabled = true
-
-        photoOutput.capturePhoto(with: settings, delegate: PhotoCaptureDelegate { photo in
-            DispatchQueue.main.async {
-                guard let capturedPhoto = photo else {
-                    print("Failed to capture photo.")
-                    return
+            HStack(spacing: 20) {
+                Button(action: onSave) {
+                    Text("Save to Gallery")
+                        .padding()
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
                 }
 
-                print("Photo capture completed successfully.")
-                photoCaptureManager.saveToPhotoLibrary(image: capturedPhoto)
+                Button(action: onRetake) {
+                    Text("Retake")
+                        .padding()
+                        .background(Color.red)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                }
             }
-        })
-
-        print("Photo capture process initiated.")
-    }
-
-    func mergeImages(cameraPhoto: UIImage, background: UIImage) -> UIImage? {
-        UIGraphicsBeginImageContext(cameraPhoto.size)
-        background.draw(in: CGRect(origin: .zero, size: cameraPhoto.size), blendMode: .normal, alpha: 0.3)
-        cameraPhoto.draw(in: CGRect(origin: .zero, size: cameraPhoto.size))
-        let combinedImage = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        return combinedImage
-    }
-    func testSaveDummyImage() {
-        guard let dummyImage = UIImage(systemName: "photo") else {
-            print("Failed to create dummy image.")
-            return
+            .padding()
         }
-
-        print("Testing save to photo library...")
-        let photoCaptureManager = PhotoCaptureManager()
-        photoCaptureManager.saveToPhotoLibrary(image: dummyImage)
+        .background(Color.black.edgesIgnoringSafeArea(.all))
+        .onAppear {
+            print("PhotoPreviewView onAppear - Photo exists: \(photo != nil)")
+        }
     }
-    
-
 }

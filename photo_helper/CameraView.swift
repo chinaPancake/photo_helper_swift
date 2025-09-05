@@ -87,12 +87,14 @@ struct CameraView: View {
             }
         case .denied, .restricted:
             print("Camera access denied or restricted.")
-            showPermissionAlert()
+            // Show an alert to guide the user to enable permissions
+            DispatchQueue.main.async {
+                self.showPermissionAlert()
+            }
         default:
             print("Unknown camera access status.")
         }
     }
-
 
     func showPermissionAlert() {
         let alert = UIAlertController(

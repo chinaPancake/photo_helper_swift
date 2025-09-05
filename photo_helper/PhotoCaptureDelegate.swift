@@ -6,23 +6,32 @@ class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
 
     init(completion: @escaping (UIImage?) -> Void) {
         self.completion = completion
+        print("PhotoCaptureDelegate initialized.")
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        print("Delegate called for photo processing.")
+        print("PhotoCaptureDelegate: didFinishProcessingPhoto called.")
+
         if let error = error {
-            print("Error capturing photo: \(error.localizedDescription)")
+            print("Error processing photo: \(error.localizedDescription)")
             completion(nil)
             return
         }
 
         guard let imageData = photo.fileDataRepresentation() else {
-            print("Failed to get photo data representation.")
+            print("PhotoCaptureDelegate: Failed to get photo data representation.")
             completion(nil)
             return
         }
 
-        print("Photo successfully processed.")
-        completion(UIImage(data: imageData))
+        print("Photo successfully processed: \(imageData.count) bytes")
+
+        if let image = UIImage(data: imageData) {
+            print("Captured photo dimensions: \(image.size.width) x \(image.size.height)")
+            completion(image)
+        } else {
+            print("PhotoCaptureDelegate: Failed to create UIImage from data.")
+            completion(nil)
+        }
     }
 }
